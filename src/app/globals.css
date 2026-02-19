@@ -1,0 +1,21 @@
+/* Tailwind base — needed for any utility classes used in project */
+@import "tailwindcss";
+
+/* Reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* A2UI surface host — give generated UIs a clean white card background */
+.a2ui-surface-host {
+  background: #ffffff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 40px rgba(0, 0, 0, 0.3);
+}
