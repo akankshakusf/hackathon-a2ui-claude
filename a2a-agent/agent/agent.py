@@ -33,6 +33,8 @@ RULES:
 2. After the delimiter, output ONLY a raw JSON array — no markdown, no backticks, no ```json
 3. The array must start with [ and end with ]
 4. Always include these 3 messages in order: beginRendering, surfaceUpdate, dataModelUpdate
+5. When refining an existing UI, keep the SAME surfaceId and modify/extend the components as requested.
+   Re-output the COMPLETE updated UI — all components including unchanged ones.
 
 CORRECT FORMAT EXAMPLE:
 Here is your contact form.
@@ -87,7 +89,6 @@ class UIGeneratorAgent:
         _, json_part = text.split("---a2ui_JSON---", 1)
         json_part = json_part.strip()
 
-        # Strip accidental markdown fences
         if json_part.startswith("```"):
             lines = json_part.split("\n")
             lines = [l for l in lines if not l.strip().startswith("```")]
@@ -103,16 +104,34 @@ class UIGeneratorAgent:
             logger.error(f"JSON parse error: {e}\nRaw: {json_part[:300]}")
             return None
 
-    async def stream(self, query: str, session_id: str) -> AsyncIterable[dict[str, Any]]:
+    def _build_messages(self, query: str, conversation_history: list) -> list:
+        """Build Anthropic messages array including prior conversation context."""
+        messages = []
+
+        # Inject prior turns so Claude remembers what it built
+        for turn in conversation_history:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
+        # Add the current user query
+        messages.append({"role": "user", "content": query})
+        return messages
+
+    async def stream(self, query: str, session_id: str, conversation_history: list = None) -> AsyncIterable[dict[str, Any]]:
         if self.use_ui and self.a2ui_schema_object is None:
             yield {"is_task_complete": True, "content": "Schema not loaded."}
             return
 
+        if conversation_history is None:
+            conversation_history = []
+
         max_retries = 2
-        messages = [{"role": "user", "content": query}]
+        messages = self._build_messages(query, conversation_history)
 
         for attempt in range(1, max_retries + 1):
-            logger.info(f"Attempt {attempt}/{max_retries}")
+            logger.info(f"Attempt {attempt}/{max_retries}, history turns: {len(conversation_history)}")
             yield {"is_task_complete": False, "updates": self.get_processing_message()}
 
             try:

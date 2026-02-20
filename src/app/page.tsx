@@ -4,6 +4,11 @@ import { useState, useRef, useEffect } from "react";
 
 type AppState = "idle" | "thinking" | "rendered" | "error";
 
+interface HistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 const PROMPTS = [
   "Build a contact form with name, email, and message",
   "Create a dashboard with 3 KPI stat cards",
@@ -37,41 +42,64 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
     const init = async () => {
       try {
         await import("@a2ui/lit");
+        const { Data } = await import("@a2ui/lit/0.8");
+        const { ContextProvider, createContext } = await import("@lit/context");
+        const themeContext = createContext("A2UITheme");
+
         if (!containerRef.current) return;
         containerRef.current.innerHTML = "";
 
         const beginMsg = messages.find((m) => "beginRendering" in m) as any;
-        if (!beginMsg?.beginRendering) {
-          console.error("No beginRendering found in messages", messages);
-          return;
-        }
-        const { surfaceId, root } = beginMsg.beginRendering;
+        if (!beginMsg?.beginRendering) return;
+        const { surfaceId } = beginMsg.beginRendering;
 
-        const surface = document.createElement("a2ui-surface");
-        surface.setAttribute("surface-id", surfaceId);
-        surface.setAttribute("root-component-id", root);
-        surface.style.cssText = "width:100%; display:block;";
-        containerRef.current.appendChild(surface);
+        const theme = {
+          components: {
+            Text: { all: {}, h1: {}, h2: {}, h3: {}, h4: {}, h5: {}, caption: {}, body: {} },
+            Button: {},
+            TextField: { container: {}, label: {}, element: {} },
+            Icon: {},
+            Card: {},
+            Row: {},
+            Column: {},
+            List: {},
+            Divider: {},
+            CheckBox: {},
+            Slider: {},
+            MultipleChoice: {},
+            DateTimeInput: {},
+            Tabs: {},
+            Modal: {},
+          },
+          markdown: {},
+          additionalStyles: {},
+        };
+
+        const processor = new Data.A2uiMessageProcessor();
+        processor.processMessages(messages);
+        const surface = processor.getSurfaces().get(surfaceId);
+        if (!surface) { console.error("[A2UI] No surface for id:", surfaceId); return; }
+
+        const wrapper = document.createElement("div");
+        wrapper.style.cssText = "width:100%;";
+        containerRef.current.appendChild(wrapper);
+
+        new ContextProvider(wrapper, { context: themeContext, initialValue: theme });
+
+        const el = document.createElement("a2ui-surface") as any;
+        el.style.cssText = "width:100%; display:block;";
+        wrapper.appendChild(el);
 
         await customElements.whenDefined("a2ui-surface");
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 150));
 
-        const el = surface as any;
-        for (const msg of messages) {
-          try { if (typeof el.receiveMessage === "function") el.receiveMessage(msg); } catch {}
-          try { if (typeof el.processMessage === "function") el.processMessage(msg); } catch {}
-          try { if (typeof el.handleMessage === "function") el.handleMessage(msg); } catch {}
-          try { if (typeof el.update === "function") el.update(msg); } catch {}
-          try {
-            surface.dispatchEvent(new CustomEvent("message", { detail: msg, bubbles: false, composed: true }));
-            surface.dispatchEvent(new CustomEvent("a2ui-message", { detail: msg, bubbles: false, composed: true }));
-            surface.dispatchEvent(new CustomEvent("a2ui:message", { detail: msg, bubbles: false, composed: true }));
-          } catch {}
-          await new Promise(r => setTimeout(r, 30));
-        }
-        console.log(`[A2UI] Fed ${messages.length} messages to surface`);
+        el.surfaceId = surfaceId;
+        el.processor = processor;
+        el.surface = surface;
+
+        console.log("[A2UI] Rendered successfully");
       } catch (e) {
-        console.error("A2UI render error:", e);
+        console.error("[A2UI] Render error:", e);
       }
     };
 
@@ -79,7 +107,12 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
   }, [mounted, messages]);
 
   if (!mounted) return null;
-  return <div ref={containerRef} style={{ width: "100%", minHeight: "300px" }} />;
+  return (
+    <div
+      ref={containerRef}
+      style={{ width: "100%", minHeight: "300px", background: "#fff", borderRadius: "12px", padding: "24px", color: "#111" }}
+    />
+  );
 }
 
 export default function Home() {
@@ -89,6 +122,7 @@ export default function Home() {
   const [lastPrompt, setLastPrompt] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  const [history, setHistory] = useState<HistoryTurn[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const refineRef = useRef<HTMLInputElement>(null);
 
@@ -99,29 +133,48 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  const submit = async (prompt: string) => {
+  const submit = async (prompt: string, isRefinement = false) => {
     const trimmed = prompt.trim();
     if (!trimmed || state === "thinking") return;
 
     setLastPrompt(trimmed);
     setInput("");
     setState("thinking");
-    setA2uiMessages([]);
     setErrorMsg("");
+
+    if (!isRefinement) {
+      setA2uiMessages([]);
+      setHistory([]);
+    }
+
+    const historyToSend = isRefinement ? history : [];
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmed }),
+        body: JSON.stringify({ prompt: trimmed, history: historyToSend }),
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (!data.messages || data.messages.length === 0)
         throw new Error("Claude generated no UI — try rephrasing");
+
       setA2uiMessages(data.messages);
       setState("rendered");
+
+      // Build assistant content for history — includes the full A2UI JSON so Claude
+      // knows exactly what it generated for follow-up refinements
+      const assistantContent = data.text
+        ? `${data.text}\n---a2ui_JSON---\n${JSON.stringify(data.messages)}`
+        : JSON.stringify(data.messages);
+
+      setHistory([
+        ...historyToSend,
+        { role: "user", content: trimmed },
+        { role: "assistant", content: assistantContent },
+      ]);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Something went wrong");
       setState("error");
@@ -133,6 +186,7 @@ export default function Home() {
     setA2uiMessages([]);
     setInput("");
     setErrorMsg("");
+    setHistory([]);
     setTimeout(() => inputRef.current?.focus(), 80);
   };
 
@@ -192,11 +246,12 @@ export default function Home() {
         .rh { padding: 12px 24px; display:flex; align-items:center; gap:12px; border-bottom: 1px solid var(--border); flex-shrink:0; }
         .rl { font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:0.06em; }
         .rp { font-size:13px; color:var(--muted); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .ras { display:flex; gap:8px; }
+        .ras { display:flex; gap:8px; align-items:center; }
         .ab { font-family:var(--mono); font-size:11px; padding:5px 13px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color: var(--muted); cursor:pointer; transition:all 0.15s; white-space:nowrap; }
         .ab:hover { border-color: rgba(124,58,237,0.4); color:var(--text); }
         .ab.p { background: rgba(124,58,237,0.15); border-color:rgba(124,58,237,0.4); color: var(--accent-soft); }
         .ab.p:hover { background: rgba(124,58,237,0.25); }
+        .history-badge { font-family:var(--mono); font-size:10px; color:var(--accent-soft); padding:2px 8px; border-radius:4px; background:rgba(124,58,237,0.1); border:1px solid rgba(124,58,237,0.2); }
         .canvas { flex:1; overflow-y:auto; display:flex; align-items:flex-start; justify-content:center; padding: 52px 24px; }
         .ci { width:100%; max-width:700px; animation: fadeUp 0.4s ease; }
         @keyframes fadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
@@ -241,7 +296,7 @@ export default function Home() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      submit(input);
+                      submit(input, false);
                     }
                   }}
                   placeholder={PROMPTS[placeholderIdx]}
@@ -250,12 +305,12 @@ export default function Home() {
                 />
                 <div className="ia">
                   <span className="kh">↵ enter</span>
-                  <button className="go" onClick={() => submit(input)} disabled={!input.trim()}>→</button>
+                  <button className="go" onClick={() => submit(input, false)} disabled={!input.trim()}>→</button>
                 </div>
               </div>
               <div className="chips">
                 {PROMPTS.slice(0, 5).map((p) => (
-                  <button key={p} className="chip" onClick={() => submit(p)}>{p}</button>
+                  <button key={p} className="chip" onClick={() => submit(p, false)}>{p}</button>
                 ))}
               </div>
             </div>
@@ -276,6 +331,9 @@ export default function Home() {
               <span className="rl">PROMPT</span>
               <span className="rp">{lastPrompt}</span>
               <div className="ras">
+                {history.length > 2 && (
+                  <span className="history-badge">{Math.floor(history.length / 2)} refinement{history.length > 4 ? "s" : ""}</span>
+                )}
                 <button className="ab p" onClick={() => refineRef.current?.focus()}>Refine ↑</button>
                 <button className="ab" onClick={reset}>New UI</button>
               </div>
@@ -289,16 +347,22 @@ export default function Home() {
               <input
                 ref={refineRef}
                 className="ri"
-                placeholder="Refine — e.g. 'add a phone field' or 'make it more playful'"
+                placeholder="Refine — e.g. 'add a phone field' or 'make it dark mode'"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const val = (e.target as HTMLInputElement).value;
-                    if (val.trim()) { submit(val); (e.target as HTMLInputElement).value = ""; }
+                    if (val.trim()) {
+                      submit(val, true);
+                      (e.target as HTMLInputElement).value = "";
+                    }
                   }
                 }}
               />
               <button className="ab p" onClick={() => {
-                if (refineRef.current?.value.trim()) { submit(refineRef.current.value); refineRef.current.value = ""; }
+                if (refineRef.current?.value.trim()) {
+                  submit(refineRef.current.value, true);
+                  refineRef.current.value = "";
+                }
               }}>→</button>
             </div>
           </div>

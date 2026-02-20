@@ -6,7 +6,7 @@ const A2UI_EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.8";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { prompt } = body;
+    const { prompt, history } = body;
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 });
@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
           role: "user",
           parts: [{ kind: "text", text: prompt.trim() }],
           extensions: [A2UI_EXTENSION_URI],
+          // Attach history in message metadata so executor can read it
+          metadata: {
+            conversationHistory: history || [],
+          },
         },
         configuration: {
           acceptedOutputModes: ["text", "application/json+a2ui"],
@@ -79,13 +83,10 @@ export async function POST(req: NextRequest) {
       [];
 
     for (const part of parts) {
-      // Structured A2UI DataParts (preferred)
       if (part.kind === "data" && part.metadata?.mimeType === "application/json+a2ui" && part.data) {
         a2uiMessages.push(part.data as Record<string, unknown>);
         continue;
       }
-
-      // Text parts — may contain ---a2ui_JSON--- delimiter
       if (part.kind === "text" && typeof part.text === "string") {
         const raw: string = part.text;
         if (raw.includes("---a2ui_JSON---")) {
@@ -107,9 +108,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Clean up text — strip <text> XML wrapper if present
     textContent = textContent.replace(/^<text>\s*/i, "").replace(/\s*<\/text>$/i, "").trim();
-
     console.log(`[generate] ${a2uiMessages.length} A2UI messages. Text: "${textContent.slice(0, 80)}"`);
 
     return NextResponse.json({
