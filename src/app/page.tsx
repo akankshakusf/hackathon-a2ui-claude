@@ -33,61 +33,49 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (!mounted || !containerRef.current || messages.length === 0) return;
 
     const init = async () => {
       try {
-        // Dynamically import @a2ui/lit only on client
         await import("@a2ui/lit");
-
         if (!containerRef.current) return;
         containerRef.current.innerHTML = "";
 
-        // Find begin rendering message
-        const beginMsg = messages.find((m) => m.beginRendering) as {
-          beginRendering?: { surfaceId: string; root: string };
-        } | undefined;
+        const beginMsg = messages.find((m) => "beginRendering" in m) as any;
         if (!beginMsg?.beginRendering) return;
-
         const { surfaceId, root } = beginMsg.beginRendering;
 
-        // Create the a2ui-surface custom element
         const surface = document.createElement("a2ui-surface");
         surface.setAttribute("surface-id", surfaceId);
         surface.setAttribute("root-component-id", root);
-        surface.style.width = "100%";
-        surface.style.display = "block";
+        surface.style.cssText = "width:100%; display:block; min-height:200px;";
         containerRef.current.appendChild(surface);
 
-        // Feed messages after element upgrades
-        setTimeout(() => {
-          messages.forEach((msg) => {
-            try {
-              const el = surface as HTMLElement & {
-                processMessage?: (m: unknown) => void;
-              };
-              if (el.processMessage) {
-                el.processMessage(msg);
-              } else {
-                surface.dispatchEvent(
-                  new CustomEvent("a2ui-message", {
-                    detail: msg,
-                    bubbles: true,
-                  })
-                );
-              }
-            } catch (e) {
-              console.warn("A2UI message feed error:", e);
-            }
-          });
-        }, 100);
+        // Wait for custom element to fully upgrade
+        await customElements.whenDefined("a2ui-surface");
+        await new Promise(r => setTimeout(r, 150));
+
+        // Feed each message to the surface
+        for (const msg of messages) {
+          surface.dispatchEvent(
+            new CustomEvent("a2ui:message", {
+              detail: msg,
+              bubbles: false,
+              composed: true,
+            })
+          );
+          // Also try direct method if available
+          const el = surface as any;
+          if (el.processMessage) el.processMessage(msg);
+          if (el.handleMessage) el.handleMessage(msg);
+          if (el.receiveMessage) el.receiveMessage(msg);
+        }
+
       } catch (e) {
-        console.error("A2UI init error:", e);
+        console.error("A2UI render error:", e);
       }
     };
 
@@ -95,12 +83,7 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
   }, [mounted, messages]);
 
   if (!mounted) return null;
-  return (
-    <div
-      ref={containerRef}
-      style={{ width: "100%", minHeight: "200px" }}
-    />
-  );
+  return <div ref={containerRef} style={{ width: "100%", minHeight: "200px" }} />;
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────

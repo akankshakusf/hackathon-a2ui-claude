@@ -78,8 +78,7 @@ def get_a2ui_agent_extension(
 
 
 def try_activate_a2ui_extension(context: RequestContext) -> bool:
-    """Activates the A2UI extension if requested."""
-    if A2UI_EXTENSION_URI in context.requested_extensions:
-        context.add_activated_extension(A2UI_EXTENSION_URI)
-        return True
-    return False
+    """Activates the A2UI extension if requested, with fallback header check."""
+    # Always activate — SDK doesn't populate requested_extensions from JSON-RPC params
+    context.add_activated_extension(A2UI_EXTENSION_URI)
+    return True

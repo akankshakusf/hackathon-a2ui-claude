@@ -1,3 +1,4 @@
+# main.py
 """
 A2A Server Entry Point for the UI Generator Agent.
 
