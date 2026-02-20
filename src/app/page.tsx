@@ -2,10 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 type AppState = "idle" | "thinking" | "rendered" | "error";
 
-// ─── Example prompts ─────────────────────────────────────────────────────────
 const PROMPTS = [
   "Build a contact form with name, email, and message",
   "Create a dashboard with 3 KPI stat cards",
@@ -17,7 +15,6 @@ const PROMPTS = [
   "Make a job application form",
 ];
 
-// ─── Thinking animation ───────────────────────────────────────────────────────
 function ThinkingDots() {
   return (
     <div className="thinking">
@@ -28,7 +25,6 @@ function ThinkingDots() {
   );
 }
 
-// ─── A2UI Renderer Component ──────────────────────────────────────────────────
 function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -45,35 +41,35 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
         containerRef.current.innerHTML = "";
 
         const beginMsg = messages.find((m) => "beginRendering" in m) as any;
-        if (!beginMsg?.beginRendering) return;
+        if (!beginMsg?.beginRendering) {
+          console.error("No beginRendering found in messages", messages);
+          return;
+        }
         const { surfaceId, root } = beginMsg.beginRendering;
 
         const surface = document.createElement("a2ui-surface");
         surface.setAttribute("surface-id", surfaceId);
         surface.setAttribute("root-component-id", root);
-        surface.style.cssText = "width:100%; display:block; min-height:200px;";
+        surface.style.cssText = "width:100%; display:block;";
         containerRef.current.appendChild(surface);
 
-        // Wait for custom element to fully upgrade
         await customElements.whenDefined("a2ui-surface");
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 200));
 
-        // Feed each message to the surface
+        const el = surface as any;
         for (const msg of messages) {
-          surface.dispatchEvent(
-            new CustomEvent("a2ui:message", {
-              detail: msg,
-              bubbles: false,
-              composed: true,
-            })
-          );
-          // Also try direct method if available
-          const el = surface as any;
-          if (el.processMessage) el.processMessage(msg);
-          if (el.handleMessage) el.handleMessage(msg);
-          if (el.receiveMessage) el.receiveMessage(msg);
+          try { if (typeof el.receiveMessage === "function") el.receiveMessage(msg); } catch {}
+          try { if (typeof el.processMessage === "function") el.processMessage(msg); } catch {}
+          try { if (typeof el.handleMessage === "function") el.handleMessage(msg); } catch {}
+          try { if (typeof el.update === "function") el.update(msg); } catch {}
+          try {
+            surface.dispatchEvent(new CustomEvent("message", { detail: msg, bubbles: false, composed: true }));
+            surface.dispatchEvent(new CustomEvent("a2ui-message", { detail: msg, bubbles: false, composed: true }));
+            surface.dispatchEvent(new CustomEvent("a2ui:message", { detail: msg, bubbles: false, composed: true }));
+          } catch {}
+          await new Promise(r => setTimeout(r, 30));
         }
-
+        console.log(`[A2UI] Fed ${messages.length} messages to surface`);
       } catch (e) {
         console.error("A2UI render error:", e);
       }
@@ -83,10 +79,9 @@ function A2UIRenderer({ messages }: { messages: Record<string, unknown>[] }) {
   }, [mounted, messages]);
 
   if (!mounted) return null;
-  return <div ref={containerRef} style={{ width: "100%", minHeight: "200px" }} />;
+  return <div ref={containerRef} style={{ width: "100%", minHeight: "300px" }} />;
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const [input, setInput] = useState("");
   const [state, setState] = useState<AppState>("idle");
@@ -97,7 +92,6 @@ export default function Home() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const refineRef = useRef<HTMLInputElement>(null);
 
-  // Rotate placeholder
   useEffect(() => {
     const interval = setInterval(() => {
       setPlaceholderIdx((i) => (i + 1) % PROMPTS.length);
@@ -121,13 +115,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: trimmed }),
       });
-
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (!data.messages || data.messages.length === 0)
         throw new Error("Claude generated no UI — try rephrasing");
-
       setA2uiMessages(data.messages);
       setState("rendered");
     } catch (err) {
@@ -148,252 +140,71 @@ export default function Home() {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap');
-
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
         :root {
-          --bg:            #08080f;
-          --surface:       #10101a;
-          --surface2:      #171724;
-          --border:        rgba(255,255,255,0.07);
-          --border-hi:     rgba(124,58,237,0.55);
-          --accent:        #7c3aed;
-          --accent-soft:   #a78bfa;
-          --accent2:       #06b6d4;
-          --glow:          rgba(124,58,237,0.22);
-          --text:          #eeecff;
-          --muted:         #6b6b88;
-          --dim:           #2e2e42;
-          --mono:          'DM Mono', monospace;
-          --display:       'Syne', sans-serif;
-          --r:             14px;
+          --bg: #08080f; --surface: #10101a; --surface2: #171724;
+          --border: rgba(255,255,255,0.07); --border-hi: rgba(124,58,237,0.55);
+          --accent: #7c3aed; --accent-soft: #a78bfa; --accent2: #06b6d4;
+          --glow: rgba(124,58,237,0.22); --text: #eeecff;
+          --muted: #6b6b88; --dim: #2e2e42;
+          --mono: 'DM Mono', monospace; --display: 'Syne', sans-serif; --r: 14px;
         }
-
-        body {
-          background: var(--bg);
-          color: var(--text);
-          font-family: var(--display);
-          min-height: 100vh;
-          overflow-x: hidden;
-          -webkit-font-smoothing: antialiased;
-        }
-
-        /* grid bg */
-        body::before {
-          content: '';
-          position: fixed; inset: 0;
-          background-image:
-            linear-gradient(rgba(124,58,237,0.035) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(124,58,237,0.035) 1px, transparent 1px);
-          background-size: 44px 44px;
-          pointer-events: none; z-index: 0;
-        }
-
-        .orb {
-          position: fixed; border-radius: 50%;
-          filter: blur(130px); pointer-events: none; z-index: 0;
-        }
-        .orb1 {
-          width: 700px; height: 700px;
-          background: radial-gradient(circle, rgba(124,58,237,0.13), transparent 70%);
-          top: -250px; left: -250px;
-        }
-        .orb2 {
-          width: 550px; height: 550px;
-          background: radial-gradient(circle, rgba(6,182,212,0.08), transparent 70%);
-          bottom: -180px; right: -180px;
-        }
-
-        .app {
-          position: relative; z-index: 1;
-          min-height: 100vh; display: flex; flex-direction: column;
-        }
-
-        /* ── HEADER ── */
-        .hdr {
-          padding: 18px 32px;
-          display: flex; align-items: center; justify-content: space-between;
-          border-bottom: 1px solid var(--border);
-          backdrop-filter: blur(10px);
-        }
-        .logo {
-          display: flex; align-items: center; gap: 10px;
-          font-size: 15px; font-weight: 700; letter-spacing: -0.025em;
-        }
-        .pulse {
-          width: 9px; height: 9px; border-radius: 50%;
-          background: var(--accent);
-          box-shadow: 0 0 14px var(--accent);
-          animation: pulse 2.2s ease-in-out infinite;
-        }
-        @keyframes pulse {
-          0%,100% { opacity:1; transform:scale(1); }
-          50% { opacity:0.5; transform:scale(0.8); }
-        }
-        .chip-badge {
-          font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
-          padding: 3px 9px; border-radius: 5px;
-          background: rgba(124,58,237,0.14); border: 1px solid rgba(124,58,237,0.3);
-          color: var(--accent-soft);
-        }
-
-        /* ── IDLE ── */
-        .idle {
-          flex:1; display:flex; flex-direction:column;
-          align-items:center; justify-content:center;
-          padding: 48px 24px; gap: 52px;
-        }
+        body { background: var(--bg); color: var(--text); font-family: var(--display); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+        body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(124,58,237,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.035) 1px, transparent 1px); background-size: 44px 44px; pointer-events: none; z-index: 0; }
+        .orb { position: fixed; border-radius: 50%; filter: blur(130px); pointer-events: none; z-index: 0; }
+        .orb1 { width: 700px; height: 700px; background: radial-gradient(circle, rgba(124,58,237,0.13), transparent 70%); top: -250px; left: -250px; }
+        .orb2 { width: 550px; height: 550px; background: radial-gradient(circle, rgba(6,182,212,0.08), transparent 70%); bottom: -180px; right: -180px; }
+        .app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+        .hdr { padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); }
+        .logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; letter-spacing: -0.025em; }
+        .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); animation: pulse 2.2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.5; transform:scale(0.8); } }
+        .chip-badge { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; padding: 3px 9px; border-radius: 5px; background: rgba(124,58,237,0.14); border: 1px solid rgba(124,58,237,0.3); color: var(--accent-soft); }
+        .idle { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 48px 24px; gap: 52px; }
         .hero { text-align:center; max-width: 660px; }
-        .eyebrow {
-          font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
-          text-transform: uppercase; color: var(--accent2); margin-bottom: 18px;
-        }
-        h1 {
-          font-size: clamp(38px, 6.5vw, 68px);
-          font-weight: 800; line-height: 1.04; letter-spacing: -0.045em;
-          margin-bottom: 18px;
-        }
-        h1 span {
-          background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
-          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-          background-clip: text;
-        }
-        .sub {
-          font-size: 16px; color: var(--muted); line-height: 1.65; font-weight: 400;
-        }
-
-        /* ── INPUT ZONE ── */
+        .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent2); margin-bottom: 18px; }
+        h1 { font-size: clamp(38px, 6.5vw, 68px); font-weight: 800; line-height: 1.04; letter-spacing: -0.045em; margin-bottom: 18px; }
+        h1 span { background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .sub { font-size: 16px; color: var(--muted); line-height: 1.65; font-weight: 400; }
         .iz { width:100%; max-width: 700px; display:flex; flex-direction:column; gap:14px; }
-        .iw {
-          position: relative;
-          background: var(--surface); border: 1px solid var(--border);
-          border-radius: var(--r);
-          transition: border-color 0.2s, box-shadow 0.2s;
-        }
-        .iw:focus-within {
-          border-color: var(--border-hi);
-          box-shadow: 0 0 0 3px var(--glow), 0 12px 40px rgba(0,0,0,0.5);
-        }
-        .iw textarea {
-          width:100%; background:transparent; border:none; outline:none; resize:none;
-          color: var(--text); font-family: var(--display); font-size: 16px;
-          line-height: 1.55; padding: 20px 130px 20px 22px;
-          min-height: 68px; max-height: 180px;
-        }
+        .iw { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); transition: border-color 0.2s, box-shadow 0.2s; }
+        .iw:focus-within { border-color: var(--border-hi); box-shadow: 0 0 0 3px var(--glow), 0 12px 40px rgba(0,0,0,0.5); }
+        .iw textarea { width:100%; background:transparent; border:none; outline:none; resize:none; color: var(--text); font-family: var(--display); font-size: 16px; line-height: 1.55; padding: 20px 130px 20px 22px; min-height: 68px; max-height: 180px; }
         .iw textarea::placeholder { color: var(--dim); }
-        .ia {
-          position:absolute; right:14px; bottom:14px;
-          display:flex; align-items:center; gap:10px;
-        }
+        .ia { position:absolute; right:14px; bottom:14px; display:flex; align-items:center; gap:10px; }
         .kh { font-family: var(--mono); font-size: 10px; color: var(--dim); }
-        .go {
-          background: linear-gradient(135deg, var(--accent), #6d28d9);
-          color: #fff; border:none; border-radius:9px;
-          width:38px; height:38px; cursor:pointer;
-          display:flex; align-items:center; justify-content:center;
-          font-size:17px; transition: opacity 0.15s, transform 0.15s;
-          flex-shrink:0;
-        }
+        .go { background: linear-gradient(135deg, var(--accent), #6d28d9); color: #fff; border:none; border-radius:9px; width:38px; height:38px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:17px; transition: opacity 0.15s, transform 0.15s; flex-shrink:0; }
         .go:hover:not(:disabled) { opacity:0.85; transform:scale(1.06); }
         .go:disabled { opacity:0.25; cursor:not-allowed; }
-
         .chips { display:flex; flex-wrap:wrap; gap:8px; }
-        .chip {
-          font-family: var(--mono); font-size: 11px;
-          padding: 6px 13px; border-radius: 7px;
-          background: var(--surface2); border: 1px solid var(--border);
-          color: var(--muted); cursor:pointer;
-          transition: all 0.15s; white-space: nowrap;
-        }
-        .chip:hover {
-          border-color: rgba(124,58,237,0.45);
-          color: var(--text); background: rgba(124,58,237,0.09);
-        }
-
-        /* ── THINKING ── */
-        .thinking-scr {
-          flex:1; display:flex; flex-direction:column;
-          align-items:center; justify-content:center; gap:22px;
-        }
+        .chip { font-family: var(--mono); font-size: 11px; padding: 6px 13px; border-radius: 7px; background: var(--surface2); border: 1px solid var(--border); color: var(--muted); cursor:pointer; transition: all 0.15s; white-space: nowrap; }
+        .chip:hover { border-color: rgba(124,58,237,0.45); color: var(--text); background: rgba(124,58,237,0.09); }
+        .thinking-scr { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; }
         .thinking { display:flex; gap:7px; align-items:center; }
-        .dot {
-          width:9px; height:9px; border-radius:50%;
-          background: var(--accent);
-          animation: bop 1.4s ease-in-out infinite;
-        }
+        .dot { width:9px; height:9px; border-radius:50%; background: var(--accent); animation: bop 1.4s ease-in-out infinite; }
         .dot:nth-child(2) { animation-delay:0.2s; background: var(--accent-soft); }
         .dot:nth-child(3) { animation-delay:0.4s; background: var(--accent2); }
-        @keyframes bop {
-          0%,80%,100% { transform:translateY(0); opacity:0.35; }
-          40% { transform:translateY(-11px); opacity:1; }
-        }
-        .thlabel {
-          font-family: var(--mono); font-size:11px; letter-spacing:0.12em;
-          text-transform:uppercase; color: var(--accent);
-        }
-        .thprompt {
-          font-family: var(--mono); font-size:13px; color: var(--muted);
-          max-width:500px; text-align:center; padding:0 24px; line-height:1.5;
-        }
+        @keyframes bop { 0%,80%,100% { transform:translateY(0); opacity:0.35; } 40% { transform:translateY(-11px); opacity:1; } }
+        .thlabel { font-family: var(--mono); font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color: var(--accent); }
+        .thprompt { font-family: var(--mono); font-size:13px; color: var(--muted); max-width:500px; text-align:center; padding:0 24px; line-height:1.5; }
         .thprompt em { color: var(--text); font-style:normal; }
-
-        /* ── RENDERED ── */
         .rendered { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-        .rh {
-          padding: 12px 24px; display:flex; align-items:center; gap:12px;
-          border-bottom: 1px solid var(--border); flex-shrink:0;
-        }
+        .rh { padding: 12px 24px; display:flex; align-items:center; gap:12px; border-bottom: 1px solid var(--border); flex-shrink:0; }
         .rl { font-family:var(--mono); font-size:10px; color:var(--dim); letter-spacing:0.06em; }
-        .rp {
-          font-size:13px; color:var(--muted); flex:1;
-          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-        }
+        .rp { font-size:13px; color:var(--muted); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .ras { display:flex; gap:8px; }
-        .ab {
-          font-family:var(--mono); font-size:11px; padding:5px 13px; border-radius:7px;
-          border:1px solid var(--border); background:var(--surface);
-          color: var(--muted); cursor:pointer; transition:all 0.15s; white-space:nowrap;
-        }
+        .ab { font-family:var(--mono); font-size:11px; padding:5px 13px; border-radius:7px; border:1px solid var(--border); background:var(--surface); color: var(--muted); cursor:pointer; transition:all 0.15s; white-space:nowrap; }
         .ab:hover { border-color: rgba(124,58,237,0.4); color:var(--text); }
-        .ab.p {
-          background: rgba(124,58,237,0.15); border-color:rgba(124,58,237,0.4);
-          color: var(--accent-soft);
-        }
+        .ab.p { background: rgba(124,58,237,0.15); border-color:rgba(124,58,237,0.4); color: var(--accent-soft); }
         .ab.p:hover { background: rgba(124,58,237,0.25); }
-
-        .canvas {
-          flex:1; overflow-y:auto;
-          display:flex; align-items:flex-start; justify-content:center;
-          padding: 52px 24px;
-        }
-        .ci {
-          width:100%; max-width:700px;
-          animation: fadeUp 0.4s ease;
-        }
-        @keyframes fadeUp {
-          from { opacity:0; transform:translateY(18px); }
-          to   { opacity:1; transform:translateY(0); }
-        }
-
-        .refbar {
-          border-top: 1px solid var(--border); padding:16px 24px;
-          display:flex; gap:10px; align-items:center; flex-shrink:0;
-        }
-        .ri {
-          flex:1; background:var(--surface); border:1px solid var(--border);
-          border-radius:9px; color:var(--text); font-family:var(--display);
-          font-size:14px; padding:10px 16px; outline:none;
-          transition: border-color 0.2s;
-        }
+        .canvas { flex:1; overflow-y:auto; display:flex; align-items:flex-start; justify-content:center; padding: 52px 24px; }
+        .ci { width:100%; max-width:700px; animation: fadeUp 0.4s ease; }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+        .refbar { border-top: 1px solid var(--border); padding:16px 24px; display:flex; gap:10px; align-items:center; flex-shrink:0; }
+        .ri { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:9px; color:var(--text); font-family:var(--display); font-size:14px; padding:10px 16px; outline:none; transition: border-color 0.2s; }
         .ri:focus { border-color: var(--border-hi); }
         .ri::placeholder { color: var(--dim); }
-
-        /* ── ERROR ── */
-        .err {
-          flex:1; display:flex; flex-direction:column;
-          align-items:center; justify-content:center;
-          gap:16px; padding:40px; text-align:center;
-        }
+        .err { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:40px; text-align:center; }
         .err-icon { font-size:42px; }
         .err-title { font-size:20px; font-weight:700; }
         .err-msg { font-family:var(--mono); font-size:12px; color:var(--muted); max-width:420px; line-height:1.5; }
@@ -403,7 +214,6 @@ export default function Home() {
       <div className="orb orb2" />
 
       <div className="app">
-        {/* Header */}
         <header className="hdr">
           <div className="logo">
             <div className="pulse" />
@@ -412,7 +222,6 @@ export default function Home() {
           <span className="chip-badge">Claude · A2UI · A2A</span>
         </header>
 
-        {/* ── IDLE ── */}
         {state === "idle" && (
           <main className="idle">
             <div className="hero">
@@ -423,7 +232,6 @@ export default function Home() {
                 Claude reasons about your intent and assembles a live, interactive UI.
               </p>
             </div>
-
             <div className="iz">
               <div className="iw">
                 <textarea
@@ -442,10 +250,9 @@ export default function Home() {
                 />
                 <div className="ia">
                   <span className="kh">↵ enter</span>
-                  <button className="go" onClick={() => submit(input)} disabled={!input.trim()} aria-label="Generate">→</button>
+                  <button className="go" onClick={() => submit(input)} disabled={!input.trim()}>→</button>
                 </div>
               </div>
-
               <div className="chips">
                 {PROMPTS.slice(0, 5).map((p) => (
                   <button key={p} className="chip" onClick={() => submit(p)}>{p}</button>
@@ -455,7 +262,6 @@ export default function Home() {
           </main>
         )}
 
-        {/* ── THINKING ── */}
         {state === "thinking" && (
           <div className="thinking-scr">
             <ThinkingDots />
@@ -464,7 +270,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── RENDERED ── */}
         {state === "rendered" && (
           <div className="rendered">
             <div className="rh">
@@ -475,42 +280,30 @@ export default function Home() {
                 <button className="ab" onClick={reset}>New UI</button>
               </div>
             </div>
-
             <div className="canvas">
               <div className="ci">
                 <A2UIRenderer messages={a2uiMessages} />
               </div>
             </div>
-
             <div className="refbar">
               <input
                 ref={refineRef}
                 className="ri"
-                placeholder="Refine this UI — e.g. 'add a phone field' or 'make it feel more playful'"
+                placeholder="Refine — e.g. 'add a phone field' or 'make it more playful'"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     const val = (e.target as HTMLInputElement).value;
-                    if (val.trim()) {
-                      submit(val);
-                      (e.target as HTMLInputElement).value = "";
-                    }
+                    if (val.trim()) { submit(val); (e.target as HTMLInputElement).value = ""; }
                   }
                 }}
               />
-              <button
-                className="ab p"
-                onClick={() => {
-                  if (refineRef.current?.value.trim()) {
-                    submit(refineRef.current.value);
-                    refineRef.current.value = "";
-                  }
-                }}
-              >→</button>
+              <button className="ab p" onClick={() => {
+                if (refineRef.current?.value.trim()) { submit(refineRef.current.value); refineRef.current.value = ""; }
+              }}>→</button>
             </div>
           </div>
         )}
 
-        {/* ── ERROR ── */}
         {state === "error" && (
           <div className="err">
             <div className="err-icon">⚠</div>
